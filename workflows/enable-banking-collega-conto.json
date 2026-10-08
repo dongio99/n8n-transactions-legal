@@ -1,0 +1,94 @@
+{
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "b69d9324-b45e-4641-b713-53cbfc2f81df",
+      "name": "Avvio manuale",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        144,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "0a89aa10-64c3-499b-84cc-229a43f25e1f",
+              "name": "codice",
+              "type": "string",
+              "value": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "90240a41-bd3d-4877-9990-058f646a868c",
+      "name": "Parametri",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        368,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collegamento del conto a Enable Banking (da eseguire a mano, una tantum o alla scadenza del consenso).\n// Campo 'codice' nel nodo Parametri:\n//   - 'banche'  -> elenca le banche italiane che corrispondono a EB_ASPSP_NAME (per trovare il nome esatto)\n//   - vuoto     -> passo 1: genera il link di autorizzazione\n//   - <codice>  -> passo 2: crea la sessione e restituisce session_id da mettere in EB_SESSION_ID\nconst crypto = require('crypto');\nconst API = 'https://api.enablebanking.com';\nconst b64 = (v) => Buffer.from(typeof v === 'string' ? v : JSON.stringify(v)).toString('base64url');\nconst now = Math.floor(Date.now() / 1000);\nconst unsigned = b64({ typ: 'JWT', alg: 'RS256', kid: $env.EB_APP_ID }) + '.' +\n  b64({ iss: 'enablebanking.com', aud: 'api.enablebanking.com', iat: now, exp: now + 3600 });\nconst key = String($env.EB_PRIVATE_KEY || '').replace(/\\\\n/g, '\\n');\nconst jwt = unsigned + '.' + crypto.createSign('RSA-SHA256').update(unsigned).sign(key).toString('base64url');\nconst headers = { Authorization: 'Bearer ' + jwt };\nconst country = $env.EB_ASPSP_COUNTRY || 'IT';\nconst input = String($input.first().json.codice || '').trim();\n\nif (input === 'banche') {\n  const res = await this.helpers.httpRequest({ method: 'GET', url: API + '/aspsps', qs: { country }, headers, json: true });\n  const q = String($env.EB_ASPSP_NAME || 'bpm').toLowerCase();\n  const banche = (res.aspsps || []).map((a) => a.name).filter((n) => n.toLowerCase().includes(q) || /webank|bpm/i.test(n));\n  return [{ json: { banche } }];\n}\n\nif (!input) {\n  const validUntil = new Date(Date.now() + Number($env.EB_CONSENT_DAYS || 180) * 86400000).toISOString();\n  const res = await this.helpers.httpRequest({\n    method: 'POST', url: API + '/auth', headers, json: true,\n    body: {\n      access: { valid_until: validUntil },\n      aspsp: { name: $env.EB_ASPSP_NAME, country },\n      state: crypto.randomUUID(),\n      redirect_url: $env.EB_REDIRECT_URL,\n      psu_type: 'personal',\n    },\n  });\n  return [{ json: { passo: '1/2', istruzioni: \"Apri l'url, autorizza dall'app della banca, poi copia il parametro 'code' dall'indirizzo di ritorno nel campo 'codice' del nodo Parametri e riesegui.\", url: res.url } }];\n}\n\nconst s = await this.helpers.httpRequest({ method: 'POST', url: API + '/sessions', headers, json: true, body: { code: input } });\nreturn [{ json: { passo: '2/2', istruzioni: 'Copia session_id in EB_SESSION_ID nel file .env, svuota il campo codice e riavvia n8n.', session_id: s.session_id, accounts: s.accounts, access: s.access } }];"
+      },
+      "id": "e70f2399-a732-4464-bec9-9564850a690a",
+      "name": "Collega conto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Collega conto Enable Banking\n1. Lascia **codice** vuoto ed esegui: ottieni un `url`.\n2. Aprilo, autorizza dall'app della banca. Dall'indirizzo di ritorno copia il valore di `code=`.\n3. Incollalo in **codice** ed esegui di nuovo: ottieni `session_id`.\n4. Metti `session_id` in `EB_SESSION_ID` nel `.env` e riavvia n8n.\n\nScrivi `banche` in codice per vedere il nome esatto della banca da usare in `EB_ASPSP_NAME`.",
+        "height": 220,
+        "width": 620
+      },
+      "id": "20e19119-8f36-42d2-a7ce-7f111c227fb6",
+      "name": "Istruzioni",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        96,
+        144
+      ]
+    }
+  ],
+  "connections": {
+    "Avvio manuale": {
+      "main": [
+        [
+          {
+            "node": "Parametri",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parametri": {
+      "main": [
+        [
+          {
+            "node": "Collega conto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "dcc0b7af969dad04ee183326c36801b022f3aa3f2b423da0b1260c754dccc6a4"
+  }
+}
